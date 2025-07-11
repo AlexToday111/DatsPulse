@@ -1,25 +1,30 @@
-# Константы игры
+# Конфигурация API
+API_URL = "https://games-test.datsteam.dev"  # Тестовый сервер
+# API_URL = "https://games.datsteam.dev"  # Боевой сервер
+API_TOKEN = "YOUR_API_TOKEN_HERE"
+
+# Константы типов
 ANT_TYPES = {
-    0: "worker",    # Рабочий
-    1: "warrior",   # Боец
-    2: "scout"      # Разведчик
+    0: "worker",
+    1: "warrior",
+    2: "scout"
 }
 
 RESOURCE_TYPES = {
-    1: "apple",     # Яблоко
-    2: "bread",     # Хлеб
-    3: "nectar"     # Нектар
+    1: "apple",
+    2: "bread",
+    3: "nectar"
 }
 
 HEX_TYPES = {
-    1: "home",      # Муравейник
-    2: "empty",     # Пустой
-    3: "dirt",      # Грязь
-    4: "acid",      # Кислота
-    5: "stones"     # Камни
+    1: "home",
+    2: "empty",
+    3: "dirt",
+    4: "acid",
+    5: "stones"
 }
 
-# Стоимость перемещения
+# Стоимость перемещения по типам гексов
 MOVE_COSTS = {
     1: 1,   # home
     2: 1,   # empty
@@ -27,14 +32,3 @@ MOVE_COSTS = {
     4: 1,   # acid
     5: float('inf')  # stones (непроходимо)
 }
-
-# Приоритет ресурсов (чем выше, тем ценнее)
-RESOURCE_PRIORITY = {
-    1: 1.0,  # apple
-    2: 1.5,  # bread
-    3: 3.0   # nectar
-}
-
-# API конфигурация
-API_URL = "https://games.datsteam.dev/api/datspulse"
-API_RATE_LIMIT = 3  # запросов в секунду
