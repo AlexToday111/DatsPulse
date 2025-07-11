@@ -26,10 +26,9 @@ from bot_strat import STRATEGIES
 # from situation import SituationEvaluator   # если делали умный роутер
 
 logging.basicConfig(
-    level=logging.INFO,
+    level=logging.DEBUG,
     format="%(asctime)s  %(levelname)s  %(message)s",
 )
-
 
 class DatsPulseBot:
     """Главный управляющий класс."""

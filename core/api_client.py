@@ -2,12 +2,15 @@ import aiohttp
 import asyncio
 from config import API_URL, API_TOKEN
 
+import logging
+
 class APIClient:
     def __init__(self):
         self.session = None
         self.base_url = API_URL
         self.headers = {"X-Auth-Token": API_TOKEN}
-        self.rate_limit = 3  # 3 запроса в секунду
+        logging.info(f"APIClient headers: {self.headers}")
+        self.rate_limit = 3
         self.last_request_time = 0
 
     async def connect(self):
@@ -25,10 +28,12 @@ class APIClient:
             await asyncio.sleep(1 / self.rate_limit - elapsed)
         self.last_request_time = asyncio.get_event_loop().time()
 
+
     async def get_arena(self):
-        """Получение состояния арены (GET /api/arena)"""
         await self.ensure_rate_limit()
         async with self.session.get(f"{self.base_url}/api/arena") as response:
+            text = await response.text()
+            logging.debug(f"GET /api/arena status={response.status}, body={text}")
             if response.status == 200:
                 return await response.json()
             return None
@@ -54,9 +59,10 @@ class APIClient:
             return None
 
     async def register(self):
-        """Регистрация на раунд (POST /api/register)"""
         await self.ensure_rate_limit()
         async with self.session.post(f"{self.base_url}/api/register") as response:
+            text = await response.text()
+            logging.info(f"POST /api/register status: {response.status}, body: {text}")
             if response.status == 200:
                 return await response.json()
             return None
