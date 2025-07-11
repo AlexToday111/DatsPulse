@@ -56,18 +56,25 @@ class DatsPulseBot:
     # Асинхронный главный цикл
     # ────────────────────────────────────────────────────────────────
     async def run(self):
+        logging.info("Запуск бота...")
         await self.api.connect()
         await self.api.register()
+        logging.info("Бот зарегистрирован.")
 
         last_turn = -1
         while True:
+            logging.info("Ожидаем данные арены...")
             arena: Dict = await self.api.get_arena()
             if not arena:
+                logging.warning("Нет данных с сервера. Ждем...")
                 await asyncio.sleep(1.0)
                 continue
 
             turn = arena["turnNo"]
+            logging.info(f"Ход: {turn}")
+
             if turn == last_turn:                    # лишний опрос — ждём
+                logging.info("Ход уже обработан. Ждем следующий...")
                 await asyncio.sleep(max(0.1, arena.get("nextTurnIn", 0.5)))
                 continue
             last_turn = turn
@@ -75,8 +82,10 @@ class DatsPulseBot:
             # ─── обновляем мир ──────────────────────────────────────
             if self.world is None:
                 self.world = GameState(arena)        # первая инициализация
+                logging.info("Первая инициализация GameState")
             else:
                 self.world.update(arena)
+                logging.info("Обновление GameState")
 
             # ─── выбираем стратегию (adaptive) ─────────────────────
             if self.strategy is None:                # adaptive-режим
@@ -86,6 +95,7 @@ class DatsPulseBot:
                 logging.info("Turn %d → switched to strategy %s", turn, strat_name)
 
             # ─── генерим движения ──────────────────────────────────
+            logging.info("Генерируем действия...")
             moves: List[Dict] = self.strategy.plan(arena, self.world)
 
             await self.api.post_move(moves)

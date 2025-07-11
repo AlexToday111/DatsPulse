@@ -1,5 +1,5 @@
 # Хранение текущего состояния арены и удобные методы доступа
-
+from core.pathfinding import HexPathfinder
 from collections import namedtuple
 from typing import Dict, List, Optional
 
@@ -28,6 +28,8 @@ class GameState:
         self._tile_by_position = {(tile.q, tile.r): tile for tile in self.map_tiles}
         self._food_by_position = {(food.q, food.r): food for food in self.food}
 
+        self.pathfinder = HexPathfinder(self)
+
     def _parse_ants(self) -> List[Ant]:
         ants = []
         for ant_data in self.raw_data.get('ants', []):
@@ -49,7 +51,7 @@ class GameState:
                     ant_data['lastAttack']['r']
                 ) if ant_data.get('lastAttack') else None
             )
-            ant = ant._replace(position=(ant.q, ant.r))
+            (ant.q, ant.r)
             ants.append(ant)
         return ants
 
@@ -68,7 +70,7 @@ class GameState:
                     'amount': food_data.get('amount', 0)
                 }
             )
-            enemy = enemy._replace(position=(enemy.q, enemy.r))
+            (enemy.q, enemy.r)
             enemies.append(enemy)
         return enemies
 
@@ -134,4 +136,26 @@ class GameState:
     def all_units(self):
         """Все юниты (дружественные + враги)"""
         return self.ants + self.enemies
+    
+    def update(self, raw_data: dict):
+        """Обновить состояние на новый ход"""
+        self.__init__(raw_data)
+
+    def unexplored_frontier(self):
+        """Возвращает список гексов, которые граничат с видимыми, но сами не видны"""
+        visible = self.get_visible_area()
+        frontier = set()
+
+        for q, r in visible:
+            for nq, nr in [(q + dq, r + dr) for dq, dr in [  # соседи
+                (1, 0), (0, 1), (-1, 1), (-1, 0), (0, -1), (1, -1)
+            ]]:
+                if (nq, nr) not in visible:
+                    frontier.add((nq, nr))
+
+        return frontier
+    
+    def astar(self, start, goal, speed=None):
+        """Поиск пути A* из HexPathfinder"""
+        return self.pathfinder.find_path(start, goal)
 
