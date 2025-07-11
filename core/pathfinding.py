@@ -55,6 +55,8 @@ class HexPathfinder:
 
         # Проверка занятости другими юнитами
         for unit in self.game_state.all_units():
-            if unit.position == hex and unit.id != ant_id:
+            unit_id = getattr(unit, "id", None)
+            pos = (getattr(unit, "q", None), getattr(unit, "r", None))
+            if pos == hex and unit_id != ant_id:
                 return False
         return True
