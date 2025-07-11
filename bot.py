@@ -1,47 +1,58 @@
+from api_client import APIClient
+from game_state import GameState
+from hex_grid import HexGrid
 import asyncio
-import aiohttp
-from core.api_client import APIClient
-from core.game_state import GameState
-from strategies.queen_strategy import QueenStrategy
 
 class DatsPulseBot:
-    def __init__(self, api_token):
-        self.api = APIClient(api_token)
-        self.strategy = QueenStrategy()
+    def __init__(self):
+        self.api = APIClient()
         self.game_state = None
-    
+        
     async def run(self):
         await self.api.connect()
+        await self.api.register()  # Регистрация на раунд
         
         while True:
-            try:
-                # Получение состояния игры
-                raw_data = await self.api.get_state()
-                if not raw_data:
-                    await asyncio.sleep(0.5)
-                    continue
+            # Получение состояния арены
+            arena_data = await self.api.get_arena()
+            if arena_data:
+                self.game_state = GameState(arena_data)
                 
-                # Обновление состояния
-                self.game_state = GameState(raw_data)
+                # Принятие решений и формирование команд
+                moves = self.generate_moves()
                 
-                # Принятие решений
-                actions = self.strategy.decide_actions(self.game_state)
-                
-                # Отправка действий
-                if actions:
-                    await self.api.post_actions(actions)
-                
-                # Оптимальное ожидание следующего хода
-                await asyncio.sleep(max(0.1, self.game_state.next_turn_in / 1000))
+                # Отправка команд
+                if moves:
+                    await self.api.post_move(moves)
             
-            except aiohttp.ClientError:
-                await asyncio.sleep(1)
-            except Exception as e:
-                print(f"Critical error: {e}")
-                await asyncio.sleep(1)
+            # Ожидание следующего хода
+            await asyncio.sleep(max(0.1, self.game_state.next_turn_in))
+    
+    def generate_moves(self):
+        """Генерация команд для муравьев"""
+        moves = []
+        for ant in self.game_state.ants:
+            # Пример простой стратегии: движение к ближайшему ресурсу
+            if not ant.food['amount']:  # Если не несет ресурс
+                nearest_food = self.find_nearest_food(ant)
+                if nearest_food:
+                    path = self.calculate_path(ant, nearest_food)
+                    moves.append({
+                        "ant": ant.id,
+                        "path": [{"q": q, "r": r} for q, r in path]
+                    })
+        return moves
+    
+    def find_nearest_food(self, ant):
+        """Поиск ближайшего ресурса"""
+        # Реализация поиска с использованием HexGrid
+        pass
+    
+    def calculate_path(self, ant, target):
+        """Расчет пути с учетом препятствий"""
+        # Реализация с использованием HexGrid и данных карты
+        pass
 
 if __name__ == "__main__":
-    import sys
-    api_token = sys.argv[1] if len(sys.argv) > 1 else "YOUR_API_TOKEN"
-    bot = DatsPulseBot(api_token)
+    bot = DatsPulseBot()
     asyncio.run(bot.run())
