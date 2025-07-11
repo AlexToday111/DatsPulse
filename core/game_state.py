@@ -45,10 +45,11 @@ class GameState:
                 last_move=[(h['q'], h['r']) for h in ant_data.get('lastMove', [])],
                 move=[(h['q'], h['r']) for h in ant_data.get('move', [])],
                 last_attack=(
-                    ant_data['lastAttack']['q'],
+                    ant_data['lastAttack']['q'], 
                     ant_data['lastAttack']['r']
                 ) if ant_data.get('lastAttack') else None
             )
+            ant = ant._replace(position=(ant.q, ant.r))
             ants.append(ant)
         return ants
 
@@ -67,6 +68,7 @@ class GameState:
                     'amount': food_data.get('amount', 0)
                 }
             )
+            enemy = enemy._replace(position=(enemy.q, enemy.r))
             enemies.append(enemy)
         return enemies
 
@@ -101,6 +103,10 @@ class GameState:
         spot_data = self.raw_data.get('spot', {})
         return Hex(spot_data.get('q', 0), spot_data.get('r', 0))
 
+    def get_hex_type(self, hex):
+        tile = self.get_tile_at(*hex)
+        return tile.type if tile else 0 
+
     def get_ant_by_id(self, ant_id: str) -> Optional[Ant]:
         return self._ant_by_id.get(ant_id)
 
@@ -124,3 +130,8 @@ class GameState:
 
     def get_scouts(self) -> List[Ant]:
         return [a for a in self.ants if a.type == 2]
+
+    def all_units(self):
+        """Все юниты (дружественные + враги)"""
+        return self.ants + self.enemies
+
