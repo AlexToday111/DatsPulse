@@ -46,12 +46,24 @@ class DatsPulseBot:
     def find_nearest_food(self, ant):
         """Поиск ближайшего ресурса"""
         # Реализация поиска с использованием HexGrid
-        pass
+        if not self.game_state.food:
+            return None
+        ant_pos = (ant.q, ant.r)
+        nearest = min(
+            self.game_state.food,
+            key=lambda food: HexGrid.distance(ant_pos, (food.q, food.r))
+        )
+        return nearest
     
     def calculate_path(self, ant, target):
         """Расчет пути с учетом препятствий"""
         # Реализация с использованием HexGrid и данных карты
-        pass
+        from pathfinder import HexPathfinder  # где у тебя реализация поиска пути
+        pathfinder = HexPathfinder(self.game_state)
+        start = (ant.q, ant.r)
+        goal = (target.q, target.r)
+        path = pathfinder.find_path(start, goal, ant.id)
+        return path
 
 if __name__ == "__main__":
     bot = DatsPulseBot()
