@@ -1,48 +1,67 @@
-import httpx
-from typing import List, Dict
-from pydantic import BaseModel
-
-class Coord(BaseModel):
-    q: int
-    r: int
-
-class Ant(BaseModel):
-    id: str
-    type: int
-    q: int
-    r: int
-    health: int
-    food: Dict
-    lastMove: List[Coord] = []
-    move: List[Coord] = []
-
-class ArenaResponse(BaseModel):
-    ants: List[Ant]
-    enemies: List[Dict]
-    food: List[Dict]
-    home: List[Coord]
-    map: List[Dict]
-    nextTurnIn: float
-    score: int
-    spot: Coord
-    turnNo: int
-
-class MoveCommand(BaseModel):
-    ant: str
-    path: List[Coord]
+import aiohttp
+import asyncio
+from config import API_URL, API_TOKEN
 
 class APIClient:
-    def __init__(self, base_url: str, token: str):
-        self.base_url = base_url
-        self.headers = {"Authorization": f"Bearer {token}"}
+    def __init__(self):
+        self.session = None
+        self.base_url = API_URL
+        self.headers = {"X-Auth-Token": API_TOKEN}
+        self.rate_limit = 3  # 3 запроса в секунду
+        self.last_request_time = 0
 
-    def get_arena(self) -> ArenaResponse:
-        r = httpx.get(f"{self.base_url}/api/arena", headers=self.headers)
-        r.raise_for_status()
-        return ArenaResponse(**r.json())
+    async def connect(self):
+        """Инициализация сессии"""
+        self.session = aiohttp.ClientSession(
+            headers=self.headers,
+            timeout=aiohttp.ClientTimeout(total=5.0)
+        )
+    
+    async def ensure_rate_limit(self):
+        """Соблюдение ограничения скорости запросов"""
+        current_time = asyncio.get_event_loop().time()
+        elapsed = current_time - self.last_request_time
+        if elapsed < 1 / self.rate_limit:
+            await asyncio.sleep(1 / self.rate_limit - elapsed)
+        self.last_request_time = asyncio.get_event_loop().time()
 
-    def send_moves(self, moves: List[MoveCommand]):
-        payload = {"moves": [m.dict() for m in moves]}
-        r = httpx.post(f"{self.base_url}/api/move", json=payload, headers=self.headers)
-        r.raise_for_status()
-        return r.json()
+    async def get_arena(self):
+        """Получение состояния арены (GET /api/arena)"""
+        await self.ensure_rate_limit()
+        async with self.session.get(f"{self.base_url}/api/arena") as response:
+            if response.status == 200:
+                return await response.json()
+            return None
+
+    async def post_move(self, moves):
+        """Отправка команд перемещения (POST /api/move)"""
+        await self.ensure_rate_limit()
+        payload = {"moves": moves}
+        async with self.session.post(
+            f"{self.base_url}/api/move",
+            json=payload
+        ) as response:
+            if response.status == 200:
+                return await response.json()
+            return None
+
+    async def get_logs(self):
+        """Получение логов (GET /api/logs)"""
+        await self.ensure_rate_limit()
+        async with self.session.get(f"{self.base_url}/api/logs") as response:
+            if response.status == 200:
+                return await response.json()
+            return None
+
+    async def register(self):
+        """Регистрация на раунд (POST /api/register)"""
+        await self.ensure_rate_limit()
+        async with self.session.post(f"{self.base_url}/api/register") as response:
+            if response.status == 200:
+                return await response.json()
+            return None
+
+    async def close(self):
+        """Закрытие сессии"""
+        if self.session:
+            await self.session.close()
