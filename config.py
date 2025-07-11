@@ -1,7 +1,7 @@
 # Конфигурация API
 API_URL = "https://games-test.datsteam.dev"  # Тестовый сервер
 # API_URL = "https://games.datsteam.dev"  # Боевой сервер
-API_TOKEN = "YOUR_API_TOKEN_HERE"
+API_TOKEN = "de91dd2e-c345-4efb-8ff0-254773ec7c33"
 
 # Константы типов
 ANT_TYPES = {
