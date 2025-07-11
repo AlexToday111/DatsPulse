@@ -1,34 +1,40 @@
+"""strategies.py — интеллектуальная адаптивная стратегия для Datspulse.
+
+Файл экспортирует один объект `smart` и словарь `STRATEGIES`, совместимый
+со старым кодом бота.  Метод `plan()` возвращает массив JSON‑команд для
+эндпоинта `/api/move`.
+
+Подход
+──────
+• **Экономика**  — рабочие (type 0) собирают ресурсы по правилу
+  _нектар > хлеб > яблоко_, избегая опасных клеток и отдавая груз в
+  муравейник.
+• **Разведка**   — разведчики (type 2) постоянно открывают туман войны,
+  выбирая ближайшую неразведанную клетку либо ресурс, если он рядом.
+• **Оборона**    — бойцы (type 1) держатся в радиусе ≤2 клеток от
+  муравейника; если видят врага ≤3 гекс, атакуют его, иначе эскортируют
+  ближайшего рабочего с ресурсом.
+• **Аварийный режим** — если к муравейнику подошёл враг, все бойцы
+  переключаются в защиту и сближаются с точкой вторжения.
+• **Приоритет безопасности** — алгоритм пути отбрасывает маршруты через
+  камни (type 5) и кислоту (type 4), когда HP < 50.
+
+Алгоритм написан «жадно» и работает O(n·log n) на ход, где n — число
+юнитов + число целей.
+"""
+from __future__ import annotations
+
 from typing import List, Dict, Tuple, Optional
 import random
-import math
-from collections import defaultdict
 
-"""strategies.py – полный набросок шести стратегий
-   для соревнования **DatsPulse**.  
-   Каждая стратегия реализует `.plan(arena, world)` и возвращает список
-   JSON-команд для эндпоинта `/api/move`.
-
-   Учитываем правила:
-   • избегаем камней (type 5);  
-   • обходим кислоту (type 4), если HP < 50;  
-   • при выборе пищи приоритет: нектар > хлеб > яблоко;  
-   • бойцы стараются держать бонусы «поддержка» и «муравейник».  
-
-   Зависит от:
-   * `world.tiles` — dict[(q,r)] -> {type,cost}
-   * `world.astar(start, goal, speed)` — поиск пути с учётом ОП
-   * `world.unexplored_frontier()` — список неразведанных гексов
-"""
-
-# ---------------------------------------------------------------------
-# Общие константы и хелперы (дублируются локально для автономности файла)
-# ---------------------------------------------------------------------
-NEIGHBORS = [(+1, 0), (+1, -1), (0, -1), (-1, 0), (-1, +1), (0, +1)]
-
-UNIT_SPEED = {0: 5, 1: 4, 2: 7}  # worker, fighter, scout
-CALORIES = {1: 10, 2: 20, 3: 60}  # apple, bread, nectar
-
-# Тайлы
+# ────────────────────────────────────────────────────────────────────
+# Константы и утилиты
+# ────────────────────────────────────────────────────────────────────
+NEIGHBORS: list[Tuple[int, int]] = [
+    (+1, 0), (+1, -1), (0, -1), (-1, 0), (-1, +1), (0, +1)
+]
+UNIT_SPEED = {0: 5, 1: 4, 2: 7}              # worker, fighter, scout
+CALORIES = {1: 10, 2: 20, 3: 60}            # apple, bread, nectar
 ACID, ROCK = 4, 5
 
 
@@ -37,16 +43,16 @@ def hex_distance(a: Tuple[int, int], b: Tuple[int, int]) -> int:
     return max(dq, dr, abs(a[0] + a[1] - b[0] - b[1]))
 
 
-# ---------------------------------------------------------------------
-# Базовый класс
-# ---------------------------------------------------------------------
+# ────────────────────────────────────────────────────────────────────
+# Базовый класс‑обёртка
+# ────────────────────────────────────────────────────────────────────
 class StrategyBase:
     name: str = "base"
 
     def plan(self, arena: Dict, world) -> List[Dict]:
         raise NotImplementedError
 
-    # --------------- helpers ---------------
+    # ---------- helpers ----------
     def _closest(self, start: Tuple[int, int], cells: List[Tuple[int, int]]):
         return min(cells, key=lambda c: hex_distance(start, c)) if cells else None
 
@@ -68,234 +74,132 @@ class StrategyBase:
         return raw
 
 
-# =====================================================================
-# 1. EcoFocus – экономика
-# =====================================================================
-class EcoFocus(StrategyBase):
-    name = "eco_focus"
+# ────────────────────────────────────────────────────────────────────
+# SmartStrategy — адаптивная «одна для всех»
+# ────────────────────────────────────────────────────────────────────
+class SmartStrategy(StrategyBase):
+    name = "smart"
 
-    def plan(self, arena, world):
-        moves = []
+    # ---------------- main entry ----------------
+    def plan(self, arena: Dict, world) -> List[Dict]:
+        moves: List[Dict] = []
         nest = (arena["spot"]["q"], arena["spot"]["r"])
 
-        resources = sorted(
-            [(f["q"], f["r"], CALORIES[f["type"]]) for f in arena.get("food", [])],
-            key=lambda t: (-t[2], hex_distance(nest, (t[0], t[1])))
-        )
+        # --------------------------------------------------
+        # 1. Подготовка данных
+        # --------------------------------------------------
+        ants = arena["ants"]
+        my_workers = [a for a in ants if a["type"] == 0]
+        my_fighters = [a for a in ants if a["type"] == 1]
+        my_scouts = [a for a in ants if a["type"] == 2]
 
-        occupied = defaultdict(set)
-        for a in arena["ants"]:
-            occupied[a["type"]].add((a["q"], a["r"]))
+        enemy_positions = [(e["q"], e["r"]) for e in arena.get("enemies", [])]
+        enemy_near_nest = [p for p in enemy_positions if hex_distance(p, nest) <= 3]
 
-        for a in arena["ants"]:
-            aid, typ = a["id"], a["type"]
-            pos = (a["q"], a["r"])
-            speed = UNIT_SPEED[typ]
+        # видимые ресурсы: (q,r,калории,type)
+        foods = [
+            (f["q"], f["r"], CALORIES[f["type"]], f["type"]) for f in arena.get("food", [])
+        ]
+        foods.sort(key=lambda t: (-t[2], hex_distance(nest, (t[0], t[1]))))  # по калориям и ближе к базе
 
-            # workers
-            if typ == 0:
-                carrying = a.get("food", {}).get("amount", 0) > 0
-                target = nest if carrying else None
-                if not carrying:
-                    for q, r, _c in resources:
-                        if (q, r) not in occupied[typ]:
-                            target = (q, r)
-                            break
-                if target and target != pos:
-                    path = self.plan_path(world, pos, target, speed, a["health"])
-                    if path:
-                        moves.append({"ant": aid, "path": [{"q": q, "r": r} for q, r in path]})
+        # резервируем цели, чтобы несколько юнитов не бежали к одному объекту
+        reserved_cells: set[Tuple[int, int]] = set()
 
-            # scouts
-            elif typ == 2:
-                target = self._closest(pos, list(world.unexplored_frontier()))
-                if target:
-                    path = self.plan_path(world, pos, target, speed)
-                    if path:
-                        moves.append({"ant": aid, "path": [{"q": q, "r": r} for q, r in path]})
+        # --------------------------------------------------
+        # 2. Экстренная оборона — все бойцы к ближайшему врагу у муравейника
+        # --------------------------------------------------
+        if enemy_near_nest:
+            focus = self._closest(nest, enemy_near_nest)
+            for f in my_fighters:
+                start = (f["q"], f["r"])
+                path = self.plan_path(world, start, focus, UNIT_SPEED[1], f["health"])
+                if path:
+                    moves.append({"ant": f["id"], "path": [{"q": q, "r": r} for q, r in path]})
+            # Рабочие с грузом всё равно бегут домой; остальные стоят
+            return moves
 
-            # fighters
-            elif typ == 1:
-                if hex_distance(pos, nest) > 2:
-                    target = nest
-                else:
-                    laden = [(w["q"], w["r"]) for w in arena["ants"] if
-                             w["type"] == 0 and w.get("food", {}).get("amount", 0) > 0]
-                    target = self._closest(pos, laden)
-                if target and target != pos:
-                    path = self.plan_path(world, pos, target, speed, a["health"])
-                    if path:
-                        moves.append({"ant": aid, "path": [{"q": q, "r": r} for q, r in path]})
-        return moves
+        # --------------------------------------------------
+        # 3. Бойцы — эскорт и патруль
+        # --------------------------------------------------
+        laden_workers = [
+            (w["id"], (w["q"], w["r"]))
+            for w in my_workers if w.get("food", {}).get("amount", 0) > 0
+        ]
 
-
-# =====================================================================
-# 2. RushRaid – агрессия
-# =====================================================================
-class RushRaid(StrategyBase):
-    name = "rush_raid"
-
-    def plan(self, arena, world):
-        moves = []
-        center = (0, 0)
-        fighters = [a for a in arena["ants"] if a["type"] == 1]
-        enemy_spots = {(e["q"], e["r"]) for e in arena.get("enemies", []) if e["type"] == 1}
-        raid = self._closest(center, list(enemy_spots)) or center
-
-        for f in fighters:
-            path = self.plan_path(world, (f["q"], f["r"]), raid, UNIT_SPEED[1], f["health"])
+        for f in my_fighters:
+            fid, pos, hp = f["id"], (f["q"], f["r"]), f["health"]
+            speed = UNIT_SPEED[1]
+            # если видим врага — атакуем ближайшего
+            target_enemy = self._closest(pos, enemy_positions)
+            if target_enemy and hex_distance(pos, target_enemy) <= 3:
+                tgt = target_enemy
+            # иначе — эскорт ближайшего загруженного рабочего
+            elif laden_workers:
+                tgt = self._closest(pos, [p for _id, p in laden_workers])
+            # иначе — патрулируем вокруг базы (radius 2)
+            else:
+                ring = [(nest[0] + dq * 2, nest[1] + dr * 2) for dq, dr in NEIGHBORS]
+                tgt = self._closest(pos, ring)
+            # движение
+            path = self.plan_path(world, pos, tgt, speed, hp)
             if path:
-                moves.append({"ant": f["id"], "path": [{"q": q, "r": r} for q, r in path]})
+                moves.append({"ant": fid, "path": [{"q": q, "r": r} for q, r in path]})
 
-        frontline = {(f["q"], f["r"]) for f in fighters}
-        for w in [a for a in arena["ants"] if a["type"] == 0]:
-            pos = (w["q"], w["r"])
-            tgt = self._closest(pos, list(frontline))
-            if tgt and hex_distance(pos, tgt) > 2:
-                path = self.plan_path(world, pos, tgt, UNIT_SPEED[0], w["health"])
-                if path:
-                    moves.append({"ant": w["id"], "path": [{"q": q, "r": r} for q, r in path]})
-        return moves
+        # --------------------------------------------------
+        # 4. Рабочие — добыча и сдача ресурсов
+        # --------------------------------------------------
+        for w in my_workers:
+            wid, pos, hp = w["id"], (w["q"], w["r"]), w["health"]
+            speed = UNIT_SPEED[0]
+            carrying = w.get("food", {}).get("amount", 0) > 0
 
-
-# =====================================================================
-# 3. BunkerMode – оборона
-# =====================================================================
-class BunkerMode(StrategyBase):
-    name = "bunker_mode"
-
-    def plan(self, arena, world):
-        moves = []
-        nest = (arena["spot"]["q"], arena["spot"]["r"])
-        ring = {(nest[0] + dq, nest[1] + dr) for dq, dr in NEIGHBORS}
-
-        for a in arena["ants"]:
-            aid, typ, pos = a["id"], a["type"], (a["q"], a["r"])
-            speed = UNIT_SPEED[typ]
-            if typ == 1 and pos not in ring:
-                target = self._closest(pos, list(ring))
-                path = self.plan_path(world, pos, target, speed, a["health"])
-                if path:
-                    moves.append({"ant": aid, "path": [{"q": q, "r": r} for q, r in path]})
-            elif typ == 0:
-                foods = [(f["q"], f["r"]) for f in arena.get("food", []) if hex_distance((f["q"], f["r"]), nest) <= 3]
-                tgt = nest if a.get("food", {}).get("amount", 0) else self._closest(pos, foods)
-                if tgt and tgt != pos:
-                    path = self.plan_path(world, pos, tgt, speed, a["health"])
-                    if path:
-                        moves.append({"ant": aid, "path": [{"q": q, "r": r} for q, r in path]})
-        return moves
-
-
-# =====================================================================
-# 4. ScoutExpand – разведка
-# =====================================================================
-class ScoutExpand(StrategyBase):
-    name = "scout_expand"
-
-    def plan(self, arena, world):
-        moves = []
-        frontier = list(world.unexplored_frontier())
-        random.shuffle(frontier)
-
-        taken = set()
-        for a in arena["ants"]:
-            aid, typ, pos = a["id"], a["type"], (a["q"], a["r"])
-            speed = UNIT_SPEED[typ]
-            if typ == 2:
-                target = None
-                for cell in frontier:
-                    if cell not in taken:
-                        taken.add(cell)
-                        target = cell
+            if carrying:
+                tgt = nest
+            else:
+                # первая свободная не занятая цель из списка foods
+                tgt = None
+                for q, r, _cal, _typ in foods:
+                    cell = (q, r)
+                    if cell not in reserved_cells:
+                        reserved_cells.add(cell)
+                        tgt = cell
                         break
-                if target:
-                    path = self.plan_path(world, pos, target, speed)
-                    if path:
-                        moves.append({"ant": aid, "path": [{"q": q, "r": r} for q, r in path]})
-            elif typ == 0 and taken:
-                tgt = self._closest(pos, list(taken))
-                if tgt and hex_distance(pos, tgt) > 1:
-                    path = self.plan_path(world, pos, tgt, speed, a["health"])
-                    if path:
-                        moves.append({"ant": aid, "path": [{"q": q, "r": r} for q, r in path]})
+                if tgt is None:
+                    # fallback: разведка недры: ближайшая frontier
+                    frontier = list(world.unexplored_frontier())
+                    tgt = self._closest(pos, frontier)
+
+            # строим путь
+            path = self.plan_path(world, pos, tgt, speed, hp)
+            if path:
+                moves.append({"ant": wid, "path": [{"q": q, "r": r} for q, r in path]})
+
+        # --------------------------------------------------
+        # 5. Разведчики — открываем карту / подбираем халявную еду
+        # --------------------------------------------------
+        unexplored = list(world.unexplored_frontier())
+        random.shuffle(unexplored)
+
+        for s in my_scouts:
+            sid, pos, hp = s["id"], (s["q"], s["r"]), s["health"]
+            speed = UNIT_SPEED[2]
+
+            # если рядом есть еда в радиусе 3 — заберём её
+            near_food = [ (q, r) for q, r, _cal, _t in foods if hex_distance(pos, (q, r)) <= 3 ]
+            tgt = self._closest(pos, near_food) if near_food else None
+            if tgt is None and unexplored:
+                tgt = unexplored.pop()  # берём любую frontier‑клетку
+
+            path = self.plan_path(world, pos, tgt, speed, hp)
+            if path:
+                moves.append({"ant": sid, "path": [{"q": q, "r": r} for q, r in path]})
+
         return moves
 
 
-# =====================================================================
-# 5. MidDominate – контроль центра
-# =====================================================================
-class MidDominate(StrategyBase):
-    name = "mid_dominate"
+# ────────────────────────────────────────────────────────────────────
+# Экспорт объектов
+# ────────────────────────────────────────────────────────────────────
+smart = SmartStrategy()
 
-    def plan(self, arena, world):
-        moves = []
-        center = (0, 0)
-        choke = [(1, 0), (0, 1), (-1, 1), (-1, 0), (0, -1), (1, -1)]
-        for a in arena["ants"]:
-            aid, typ, pos = a["id"], a["type"], (a["q"], a["r"])
-            speed = UNIT_SPEED[typ]
-            target = center if typ != 1 else self._closest(pos, choke)
-            if target and target != pos:
-                path = self.plan_path(world, pos, target, speed, a["health"])
-                if path:
-                    moves.append({"ant": aid, "path": [{"q": q, "r": r} for q, r in path]})
-        return moves
-
-
-# =====================================================================
-# 6. AchievementHunt – выполнение достижений
-# =====================================================================
-class AchievementHunt(StrategyBase):
-    name = "achievement_hunt"
-
-    def plan(self, arena, world):
-        moves = []
-        turn = arena["turnNo"]
-        nest = (arena["spot"]["q"], arena["spot"]["r"])
-
-        for a in arena["ants"]:
-            aid, typ, pos = a["id"], a["type"], (a["q"], a["r"])
-            speed = UNIT_SPEED[typ]
-
-            # фаза 1: ничего не делаем – шанс 77-го места
-            if turn < 5:
-                continue
-            # фаза 2: сливаем бойцов
-            elif 5 <= turn < 15 and typ == 1:
-                # ищем ближайшую кислоту для "самоуничтожения"
-                acid_cells = [p for p, t in world.tiles.items() if t["type"] == ACID]
-                tgt = self._closest(pos, acid_cells) or (pos[0] + 6, pos[1] + 6)
-                path = self.plan_path(world, pos, tgt, speed, a["health"])
-                if path:
-                    moves.append({"ant": aid, "path": [{"q": q, "r": r} for q, r in path]})
-            # фаза 3: собираем всех бойцов в одну клетку, чтобы выполнить «Профсоюз»
-            elif turn >= 15 and typ == 1:
-                choke = nest  # выберем центральный гекс муравейника – союзный, без урона
-                if pos != choke:
-                    path = self.plan_path(world, pos, choke, speed, a["health"])
-                    if path:
-                        moves.append({"ant": aid, "path": [{"q": q, "r": r} for q, r in path]})
-        return moves
-
-
-# ---------------------------------------------------------------------
-# Экспорт словаря стратегий
-# ---------------------------------------------------------------------
-eco_focus = EcoFocus()
-rush_raid = RushRaid()
-bunker_mode = BunkerMode()
-scout_expand = ScoutExpand()
-mid_dominate = MidDominate()
-achievement_hunt = AchievementHunt()
-
-STRATEGIES = {
-    s.name: s for s in [
-        eco_focus,
-        rush_raid,
-        bunker_mode,
-        scout_expand,
-        mid_dominate,
-        achievement_hunt,
-    ]
-}
+STRATEGIES = {smart.name: smart}
