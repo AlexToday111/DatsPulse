@@ -20,9 +20,9 @@ from typing import List, Dict
 # ────────────────────────────────────────────────────────────────────
 # Локальные модули проекта
 # ────────────────────────────────────────────────────────────────────
-from bot.core.api_client import APIClient
-from bot.core.game_state import GameState
-from bot.bot_strat import STRATEGIES
+from core.api_client import APIClient
+from core.game_state import GameState
+from bot_strat import STRATEGIES
 # from situation import SituationEvaluator   # если делали умный роутер
 
 logging.basicConfig(
