@@ -81,6 +81,9 @@ class HexPathfinder:
 
         # клетка занята другим юнитом
         for unit in self.game_state.all_units():
+            unit_id = getattr(unit, "id", None)
+            pos = (getattr(unit, "q", None), getattr(unit, "r", None))
+            if pos == hex and unit_id != ant_id:
             if (unit.q, unit.r) == cell and unit.id != ant_id:
                 return False
         return True
